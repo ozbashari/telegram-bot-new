@@ -1,0 +1,29 @@
+# .github/workflows/cron.yml
+name: AliExpress Telegram Bot Cron
+
+on:
+  schedule:
+    - cron: '0 */6 * * *' # Run every 6 hours
+  workflow_dispatch:      # Allow manual runs from the GitHub Actions tab
+
+jobs:
+  trigger-scheduler:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Invoke Cron API Route
+        run: |
+          if [ -z "${{ secrets.APP_URL }}" ]; then
+            echo "ERROR: secrets.APP_URL is not configured in repository settings."
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "WARNING: secrets.CRON_SECRET is empty. Proceeding without authorization header if endpoint is open."
+          fi
+
+          echo "Triggering API at: ${{ secrets.APP_URL }}/api/cron/run"
+          
+          curl -X POST "${{ secrets.APP_URL }}/api/cron/run" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --fail

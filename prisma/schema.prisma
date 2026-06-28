@@ -1,0 +1,91 @@
+// prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Product {
+  id                  String      @id @default(uuid())
+  aliexpressProductId String      @unique
+  titleOriginal       String
+  titleHe             String?
+  bodyHe              String?
+  bulletsHe           String?     // JSON array as string
+  ctaHe               String?
+  priceOriginal       Float
+  priceDiscounted     Float
+  discountPercent     Int
+  imageUrl            String
+  affiliateLink       String?
+  categoryId          String
+  commissionRate      Float
+  rating              Float
+  salesCount          Int
+  status              String      @default("pending")
+  // status options: pending | approved | published | rejected | ai_failed
+  channelId           String
+  publishedAt         DateTime?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  
+  channel             Channel     @relation(fields: [channelId], references: [id])
+  publishLog          PublishLog[]
+
+  @@index([status])
+  @@index([channelId])
+  @@index([aliexpressProductId])
+  @@index([createdAt])
+}
+
+model Channel {
+  id                   String      @id @default(uuid())
+  name                 String
+  telegramChatId       String
+  botToken             String
+  categories           String      // JSON array of AliExpress category IDs
+  isActive             Boolean     @default(true)
+  autoPublish          Boolean     @default(false)
+  publishIntervalHours Int         @default(6)
+  lastPublishedAt      DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  
+  products             Product[]
+  publishLog           PublishLog[]
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// Settings keys:
+// aliexpress_app_key, aliexpress_app_secret, aliexpress_tracking_id
+// gemini_api_key
+// ai_system_prompt, ai_post_template
+// min_commission_rate (default: "5")
+// min_rating (default: "4.5")
+// min_sales (default: "100")
+// dedup_days (default: "30")
+// bot_active (default: "true")
+
+model PublishLog {
+  id              String    @id @default(uuid())
+  productId       String
+  channelId       String
+  telegramMsgId   String?
+  publishedAt     DateTime  @default(now())
+  status          String    // success | failed
+  errorMessage    String?
+  
+  product         Product   @relation(fields: [productId], references: [id])
+  channel         Channel   @relation(fields: [channelId], references: [id])
+
+  @@index([channelId])
+  @@index([publishedAt])
+}
