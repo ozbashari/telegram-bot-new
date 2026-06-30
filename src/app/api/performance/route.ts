@@ -28,7 +28,6 @@ export async function GET(req: NextRequest) {
 
     if (refresh) {
       // Try AliExpress traffic/performance report API
-      // Note: requires publisher to have traffic reporting enabled on AliExpress portal
       try {
         const raw = await callAliExpress('aliexpress.affiliate.traffic.report', {
           start_time: formatDate(start),
@@ -40,7 +39,7 @@ export async function GET(req: NextRequest) {
         if (result) {
           clicks = parseInt(String(result.total_click_count || 0)) || 0;
         }
-      } catch (err) {
+      } catch {
         // Try alternative method name
         try {
           const raw2 = await callAliExpress('aliexpress.affiliate.report.request', {

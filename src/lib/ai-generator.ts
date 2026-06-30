@@ -17,7 +17,7 @@ const DEFAULT_USER_PROMPT_TEMPLATE = `מוצר: {title_original}
 מחיר מקורי: \${price_original}
 מחיר מבצע: \${price_discounted}
 הנחה: {discount_percent}%
-דירוג: {rating}/5 ({sales_count} מכירות)`;
+ביקורות חיוביות: {rating}% ({sales_count} מכירות)`;
 
 export interface GenerationResult {
   title_he: string;

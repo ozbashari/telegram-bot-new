@@ -35,11 +35,8 @@ export async function GET() {
       prisma.product.count({ where: { status: 'publish_failed' } }),
       // Total published
       prisma.product.count({ where: { status: 'published' } }),
-      // Commission components for estimated calc
-      prisma.product.findMany({
-        where: { status: 'published' },
-        select: { priceDiscounted: true, commissionRate: true },
-      }),
+      // Commission aggregate — sum(price * rate/100) via raw query to avoid loading all rows
+      prisma.$queryRawUnsafe('SELECT COALESCE(SUM("priceDiscounted" * "commissionRate" / 100.0), 0) AS estimated FROM "Product" WHERE status = \'published\''),
       // Bot active status
       prisma.setting.findUnique({ where: { key: 'bot_active' } }),
       // 5 most recent published products
@@ -66,12 +63,9 @@ export async function GET() {
       })(),
     ]);
 
-    // 2. Compute commissions
-    const estimatedCommission = (publishedProducts as { priceDiscounted: number; commissionRate: number }[]).reduce((sum, p) => {
-      const rate = p.commissionRate || 0;
-      const price = p.priceDiscounted || 0;
-      return sum + (price * (rate / 100));
-    }, 0);
+    // 2. Compute commissions (result from $queryRawUnsafe returns array of rows)
+    type EstRow = { estimated: string | number };
+    const estimatedCommission = parseFloat(String((publishedProducts as EstRow[])[0]?.estimated ?? 0)) || 0;
 
     type OrderRow = { commissionFee: number; orderStatus: string };
     const realCommission = (realOrders as OrderRow[]).reduce((sum, o) => sum + o.commissionFee, 0);
@@ -99,7 +93,7 @@ export async function GET() {
         pendingCount,
         failedCount,
         totalPublished,
-        estimatedCommission: parseFloat(estimatedCommission.toFixed(2)),
+        estimatedCommission: parseFloat(estimatedCommission.toFixed(2)), // hypothetical: sum(price*rate) per published product
         realCommission: parseFloat(realCommission.toFixed(2)),
         realOrdersCount,
         completedOrdersCount,

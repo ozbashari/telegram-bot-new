@@ -32,7 +32,7 @@ export default function SettingsPage() {
     ai_system_prompt: '',
     ai_post_template: '',
     min_commission_rate: '5',
-    min_rating: '4.5',
+    min_rating: '80',
     min_sales: '100',
     dedup_days: '30',
     bot_active: 'true',
@@ -481,10 +481,10 @@ export default function SettingsPage() {
             <div className="form-group" style={{ marginBottom: '2rem' }}>
               <div className="slider-container">
                 <div className="slider-info">
-                  <span>דירוג מוצר מינימלי (Rating 1-5)</span>
+                  <span>ביקורות חיוביות מינימום % (0-100)</span>
                   <span className="slider-val">{settings.min_rating}</span>
                 </div>
-                <input type="range" min="1" max="5" step="0.1" className="slider-input" value={settings.min_rating || '4.5'} onChange={(e) => handleSettingChange('min_rating', e.target.value)} />
+                <input type="range" min="0" max="100" step="1" className="slider-input" value={settings.min_rating || '80'} onChange={(e) => handleSettingChange('min_rating', e.target.value)} />
               </div>
             </div>
 
@@ -534,7 +534,7 @@ export default function SettingsPage() {
 
             <div className="form-group" style={{ marginTop: '2rem' }}>
               <label className="form-label">תבנית נתוני מוצר ל-Gemini (User Prompt)</label>
-              <textarea className="form-input" style={{ minHeight: '140px' }} value={settings.ai_post_template || ''} onChange={(e) => handleSettingChange('ai_post_template', e.target.value)} placeholder={`מוצר: {title_original}\nמחיר מקורי: \${price_original}\nמחיר מבצע: \${price_discounted}\nהנחה: {discount_percent}%\nדירוג: {rating}/5 ({sales_count} מכירות)`} />
+              <textarea className="form-input" style={{ minHeight: '140px' }} value={settings.ai_post_template || ''} onChange={(e) => handleSettingChange('ai_post_template', e.target.value)} placeholder={`מוצר: {title_original}\nמחיר מקורי: \${price_original}\nמחיר מבצע: \${price_discounted}\nהנחה: {discount_percent}%\nביקורות חיוביות: {rating}% ({sales_count} מכירות)`} />
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>
                 זהו ה-User Prompt שנשלח ל-Gemini עבור כל מוצר. משתנים זמינים: {'{title_original}'}, {'{price_original}'}, {'{price_discounted}'}, {'{discount_percent}'}, {'{rating}'}, {'{sales_count}'}.
               </p>

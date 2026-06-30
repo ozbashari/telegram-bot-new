@@ -102,7 +102,7 @@ export async function publishToTelegram(
         photo: product.imageUrl,
         caption: captionText,
         parse_mode: 'MarkdownV2',
-        reply_markup: JSON.stringify(inlineKeyboard),
+        reply_markup: inlineKeyboard,
       }),
       cache: 'no-store',
     });
@@ -149,7 +149,7 @@ export async function publishToTelegram(
         chat_id: chatId,
         text: textBody,
         parse_mode: 'MarkdownV2',
-        reply_markup: JSON.stringify(inlineKeyboard),
+        reply_markup: inlineKeyboard,
       }),
       cache: 'no-store',
     });
