@@ -11,7 +11,7 @@ export async function generateAffiliateLink(productDetailUrl: string): Promise<s
   let trackingId = 'default';
   try {
     const dbSettings = await prisma.setting.findMany();
-    const settingsMap = new Map(dbSettings.map(s => [s.key, s.value]));
+    const settingsMap = new Map(dbSettings.map((s: { key: string; value: string }) => [s.key, s.value]));
     trackingId = settingsMap.get('aliexpress_tracking_id') || process.env.ALIEXPRESS_TRACKING_ID || 'default';
   } catch (dbError) {
     console.error('Failed to load tracking ID from settings, using fallback default:', dbError);

@@ -20,7 +20,7 @@ export async function scanProducts(): Promise<ScanResult> {
 
   try {
     const dbSettings = await prisma.setting.findMany();
-    const settingsMap = new Map(dbSettings.map(s => [s.key, s.value]));
+    const settingsMap = new Map(dbSettings.map((s: { key: string; value: string }) => [s.key, s.value]));
 
     const botActive = settingsMap.get('bot_active') !== 'false';
     const minCommissionRate = parseFloat(settingsMap.get('min_commission_rate') || '2');

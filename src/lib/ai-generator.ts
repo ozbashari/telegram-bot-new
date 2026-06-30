@@ -29,7 +29,7 @@ export interface GenerationResult {
 export async function generateContent(productId: string): Promise<GenerationResult> {
   // 1. Fetch settings from DB
   const dbSettings = await prisma.setting.findMany();
-  const settingsMap = new Map(dbSettings.map(s => [s.key, s.value]));
+  const settingsMap = new Map(dbSettings.map((s: { key: string; value: string }) => [s.key, s.value]));
 
   const apiKey = settingsMap.get('gemini_api_key') || process.env.GEMINI_API_KEY;
   const systemPrompt = settingsMap.get('ai_system_prompt') || DEFAULT_SYSTEM_PROMPT;

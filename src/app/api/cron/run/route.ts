@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     // 1. Fetch CRON_SECRET security token from Settings table or process environment variables
     const dbSettings = await prisma.setting.findMany();
-    const settingsMap = new Map(dbSettings.map(s => [s.key, s.value]));
+    const settingsMap = new Map(dbSettings.map((s: { key: string; value: string }) => [s.key, s.value]));
     const cronSecret = settingsMap.get('cron_secret') || process.env.CRON_SECRET;
 
     // 2. Validate token if configured

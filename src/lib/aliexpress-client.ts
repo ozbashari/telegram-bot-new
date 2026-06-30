@@ -22,7 +22,7 @@ function buildSignature(params: AliParams, secret: string): string {
 export async function callAliExpress(method: string, params: AliParams) {
   // Load settings from database
   const dbSettings = await prisma.setting.findMany();
-  const settingsMap = new Map(dbSettings.map(s => [s.key, s.value]));
+  const settingsMap = new Map(dbSettings.map((s: { key: string; value: string }) => [s.key, s.value]));
 
   const appKey = settingsMap.get('aliexpress_app_key') || process.env.ALIEXPRESS_APP_KEY;
   const appSecret = settingsMap.get('aliexpress_app_secret') || process.env.ALIEXPRESS_APP_SECRET;
