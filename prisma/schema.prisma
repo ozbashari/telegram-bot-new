@@ -10,7 +10,7 @@ generator client {
 
 model Product {
   id                  String      @id @default(uuid())
-  aliexpressProductId String      @unique
+  aliexpressProductId String
   titleOriginal       String
   titleHe             String?
   bodyHe              String?
@@ -26,7 +26,9 @@ model Product {
   rating              Float
   salesCount          Int
   status              String      @default("pending")
-  // status options: pending | approved | published | rejected | ai_failed
+  // status options: pending | approved | published | rejected | ai_failed | publish_failed
+  retryCount          Int         @default(0)
+  lastError           String?
   channelId           String
   publishedAt         DateTime?
   createdAt           DateTime    @default(now())
@@ -35,6 +37,7 @@ model Product {
   channel             Channel     @relation(fields: [channelId], references: [id])
   publishLog          PublishLog[]
 
+  @@unique([aliexpressProductId, channelId])
   @@index([status])
   @@index([channelId])
   @@index([aliexpressProductId])
@@ -56,6 +59,7 @@ model Channel {
   
   products             Product[]
   publishLog           PublishLog[]
+  orders               Order[]
 }
 
 model Setting {
@@ -73,6 +77,25 @@ model Setting {
 // min_sales (default: "100")
 // dedup_days (default: "30")
 // bot_active (default: "true")
+// resend_api_key, review_email_to
+
+model Order {
+  id              String    @id @default(uuid())
+  aliOrderId      String    @unique
+  channelId       String?
+  productTitle    String?
+  orderStatus     String
+  commissionFee   Float     @default(0)
+  commissionRate  Float     @default(0)
+  paidAmount      Float     @default(0)
+  orderCreatedAt  DateTime
+  fetchedAt       DateTime  @default(now())
+
+  channel         Channel?  @relation(fields: [channelId], references: [id])
+
+  @@index([orderCreatedAt])
+  @@index([channelId])
+}
 
 model PublishLog {
   id              String    @id @default(uuid())

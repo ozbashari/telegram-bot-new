@@ -1,29 +1,39 @@
-# .github/workflows/cron.yml
-name: AliExpress Telegram Bot Cron
+name: Auto Publish Cron
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Run every 6 hours
-  workflow_dispatch:      # Allow manual runs from the GitHub Actions tab
+    # Auto-publish: 08:00, 12:00, 16:00, 20:00, 00:00 Israel time (UTC+3) = 05:00,09:00,13:00,17:00,21:00 UTC
+    - cron: '0 5,9,13,17,21 * * *'
+    # Daily review email: 09:00 Israel time = 06:00 UTC (different hour to avoid conflict)
+    - cron: '0 6 * * *'
+  workflow_dispatch:
 
 jobs:
-  trigger-scheduler:
+  auto-publish:
+    if: github.event.schedule == '0 5,9,13,17,21 * * *' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Invoke Cron API Route
+      - name: Trigger publish cron
         run: |
-          if [ -z "${{ secrets.APP_URL }}" ]; then
-            echo "ERROR: secrets.APP_URL is not configured in repository settings."
+          RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X GET \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.APP_URL }}/api/cron/run")
+          echo "HTTP status: $RESPONSE"
+          cat /tmp/response.json
+          if [ "$RESPONSE" != "200" ]; then
+            echo "::error::Cron endpoint returned non-200 status: $RESPONSE"
             exit 1
           fi
-          
-          if [ -z "${{ secrets.CRON_SECRET }}" ]; then
-            echo "WARNING: secrets.CRON_SECRET is empty. Proceeding without authorization header if endpoint is open."
-          fi
 
-          echo "Triggering API at: ${{ secrets.APP_URL }}/api/cron/run"
-          
-          curl -X POST "${{ secrets.APP_URL }}/api/cron/run" \
+  daily-review:
+    if: github.event.schedule == '0 6 * * *' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Send daily review email
+        run: |
+          curl -s -X GET \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json" \
-            --fail
+            "${{ secrets.APP_URL }}/api/cron/review"

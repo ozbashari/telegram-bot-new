@@ -120,20 +120,29 @@ export async function POST(req: NextRequest) {
       affiliateLink,
     };
 
-    // 6. Upsert the product
-    const product = await prisma.product.upsert({
-      where: { aliexpressProductId: String(item.product_id) },
+    // 6. Upsert the product using compound key (aliexpressProductId + channelId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const prismaAny = prisma as any;
+    const product = await prismaAny.product.upsert({
+      where: {
+        aliexpressProductId_channelId: {
+          aliexpressProductId: String(item.product_id),
+          channelId,
+        },
+      },
       update: {
         ...productData,
         titleHe: null,
         bodyHe: null,
         bulletsHe: null,
         ctaHe: null,
+        retryCount: 0,
+        lastError: null,
       },
       create: productData,
     });
 
-    // 7. Run AI Content Generation
+    // 8. Run AI Content Generation
     const aiResult = await generateContent(product.id);
 
     if (aiResult.status === 'failed') {

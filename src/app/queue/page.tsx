@@ -40,6 +40,8 @@ export default function QueuePage() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
   // Filters state
   const [selectedChannel, setSelectedChannel] = useState<string>('all');
@@ -231,6 +233,82 @@ export default function QueuePage() {
     }
   };
 
+  // Bulk selection helpers
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === products.length && products.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(products.map(p => p.id)));
+    }
+  };
+
+  const handleBulkPublish = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`לפרסם ${selectedIds.size} מוצרים לטלגרם?`)) return;
+    setIsBulkProcessing(true);
+    setErrorMsg(null);
+    try {
+      const productIds = Array.from(selectedIds);
+      // Auto-save all selected products first
+      for (const id of productIds) {
+        await saveProductChanges(id);
+      }
+      const res = await fetch('/api/products/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'publish', productIds }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        triggerSuccess(`${data.successCount}/${data.total} מוצרים פורסמו בהצלחה 🚀`);
+        setProducts(prev => prev.filter(p => !selectedIds.has(p.id)));
+        setSelectedIds(new Set());
+      } else {
+        setErrorMsg(data.error || 'פרסום מרובה נכשל');
+      }
+    } catch (err) {
+      setErrorMsg((err as Error).message || 'שגיאת רשת בפרסום מרובה');
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkReject = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`למחוק ${selectedIds.size} מוצרים מהתור?`)) return;
+    setIsBulkProcessing(true);
+    setErrorMsg(null);
+    try {
+      const productIds = Array.from(selectedIds);
+      const res = await fetch('/api/products/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject', productIds }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        triggerSuccess(`${data.count} מוצרים הוסרו מהתור 🗑️`);
+        setProducts(prev => prev.filter(p => !selectedIds.has(p.id)));
+        setSelectedIds(new Set());
+      } else {
+        setErrorMsg(data.error || 'מחיקה מרובה נכשלה');
+      }
+    } catch (err) {
+      setErrorMsg((err as Error).message || 'שגיאת רשת במחיקה מרובה');
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
   // Regenerate Copy with AI (POST /api/products/generate)
   const handleRegenerateAi = async (productId: string) => {
     try {
@@ -294,9 +372,41 @@ export default function QueuePage() {
         </div>
 
         <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={fetchProducts}>
-          🔄 רענן רשימה
+          🔄 רענן
         </button>
+
+        {products.length > 0 && (
+          <button className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }} onClick={toggleSelectAll}>
+            {selectedIds.size === products.length ? '☐ בטל הכל' : `☑ בחר הכל (${products.length})`}
+          </button>
+        )}
       </div>
+
+      {/* Bulk Actions Bar — visible when items are selected */}
+      {selectedIds.size > 0 && (
+        <div className="glass-card" style={{ padding: '1rem 2rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.5rem', background: 'rgba(59, 130, 246, 0.08)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+          <span style={{ color: 'var(--accent-blue)', fontWeight: 600, fontSize: '0.95rem' }}>
+            {selectedIds.size} מוצרים נבחרו
+          </span>
+          <button
+            className={`btn btn-primary ${isBulkProcessing ? 'btn-disabled' : ''}`}
+            disabled={isBulkProcessing}
+            onClick={handleBulkPublish}
+          >
+            {isBulkProcessing ? 'מפרסם...' : `🚀 פרסם ${selectedIds.size} נבחרים`}
+          </button>
+          <button
+            className={`btn btn-danger ${isBulkProcessing ? 'btn-disabled' : ''}`}
+            disabled={isBulkProcessing}
+            onClick={handleBulkReject}
+          >
+            {isBulkProcessing ? 'מוחק...' : `🗑️ מחק ${selectedIds.size} נבחרים`}
+          </button>
+          <button className="btn btn-secondary" onClick={() => setSelectedIds(new Set())}>
+            ביטול
+          </button>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="glass-card" style={{ background: 'rgba(244, 63, 94, 0.08)', borderColor: 'rgba(244, 63, 94, 0.2)', color: '#f87171', padding: '1rem 1.5rem', marginBottom: '1.5rem', borderRadius: '8px' }}>
@@ -332,11 +442,22 @@ export default function QueuePage() {
             const bulletsJsonStr = JSON.stringify(bulletsArray);
 
             return (
-              <div key={product.id} className="glass-card" style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '2.5rem', padding: '2rem' }}>
+              <div key={product.id} className="glass-card" style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '2.5rem', padding: '2rem', borderColor: selectedIds.has(product.id) ? 'rgba(59, 130, 246, 0.5)' : undefined, background: selectedIds.has(product.id) ? 'rgba(59, 130, 246, 0.04)' : undefined }}>
                 
                 {/* Editor Content and AliExpress parameters */}
                 <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                   <div>
+                    {/* Selection checkbox + Channel badge */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(product.id)}
+                        onChange={() => toggleSelect(product.id)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#3b82f6', flexShrink: 0 }}
+                      />
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>בחר</span>
+                    </div>
+
                     {/* Channel badge and AliExpress Info */}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '1.5rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                       <div>ערוץ יעד: <strong style={{ color: 'var(--accent-blue)' }}>{product.channel.name}</strong></div>

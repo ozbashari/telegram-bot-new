@@ -5,6 +5,10 @@ import { generateAffiliateLink } from './monetization';
 
 const MAX_NEW_PER_SCAN = 10;
 
+// AliExpress evaluate_rate is a POSITIVE FEEDBACK PERCENTAGE (0-100), not a 5-star rating.
+// Default min is 80% positive (good enough quality).
+const DEFAULT_MIN_FEEDBACK_PCT = 80;
+
 export interface ScanResult {
   scanned: number;
   new: number;
@@ -24,19 +28,31 @@ export async function scanProducts(): Promise<ScanResult> {
 
     const botActive = settingsMap.get('bot_active') !== 'false';
     const minCommissionRate = parseFloat(settingsMap.get('min_commission_rate') || '2');
-    const minRating = parseFloat(settingsMap.get('min_rating') || '4.0');
+    // evaluate_rate is feedback %, stored as 0-100. Default: 80% positive.
+    const minFeedbackPct = parseFloat(settingsMap.get('min_rating') || String(DEFAULT_MIN_FEEDBACK_PCT));
     const minSales = parseInt(settingsMap.get('min_sales') || '10');
     const dedupDays = parseInt(settingsMap.get('dedup_days') || '30');
+    // scan_page_offset rotates which page we fetch, so we don't always see the same products
+    const currentPage = parseInt(settingsMap.get('scan_page_offset') || '1');
+    const nextPage = currentPage >= 5 ? 1 : currentPage + 1; // Rotate pages 1-5
 
     if (!botActive) {
       return { scanned: 0, new: 0, duplicates: 0, errors: ['Bot Scan Engine is disabled.'] };
     }
 
     const activeChannels = await prisma.channel.findMany({ where: { isActive: true } });
-
     if (activeChannels.length === 0) {
       return { scanned: 0, new: 0, duplicates: 0, errors: ['No active channels found.'] };
     }
+
+    // Pre-load recently seen products to avoid N+1 dedup queries
+    const cutOffDate = new Date();
+    cutOffDate.setDate(cutOffDate.getDate() - dedupDays);
+    const recentProducts = await prisma.product.findMany({
+      where: { createdAt: { gte: cutOffDate } },
+      select: { aliexpressProductId: true, channelId: true },
+    });
+    const existingSet = new Set(recentProducts.map(p => `${p.aliexpressProductId}_${p.channelId}`));
 
     outerLoop:
     for (const channel of activeChannels) {
@@ -67,10 +83,10 @@ export async function scanProducts(): Promise<ScanResult> {
 
           const rawResponse = await callAliExpress('aliexpress.affiliate.product.query', {
             category_ids: categoryId,
-            sort: 'SALE_PRICE_ASC',
+            sort: 'LAST_VOLUME_DESC', // Sort by bestsellers — better commission & quality
             fields,
-            page_size: '10',
-            page_no: '1',
+            page_size: '50',          // Fetch more to survive strict filters
+            page_no: String(currentPage),
             target_currency: 'USD',
             target_language: 'EN',
           });
@@ -84,24 +100,21 @@ export async function scanProducts(): Promise<ScanResult> {
             scanned++;
 
             const commissionRate = parseFloat(String(item.commission_rate || 0));
-            const rating = parseFloat(String(item.evaluate_rate || 0));
+            // evaluate_rate = positive feedback % (e.g. 97.3 means 97.3% positive reviews)
+            const feedbackPct = parseFloat(String(item.evaluate_rate || 0));
             const salesCount = parseInt(String(item.lastest_volume || 0)) || 0;
-            const discountPercent = parseInt(String(item.discount || 0).replace('%', '')) || 0;
+            // discount may come as "10%" or "10" — strip % sign
+            const discountStr = String(item.discount || '0').replace('%', '').trim();
+            const discountPercent = parseInt(discountStr) || 0;
 
             if (commissionRate < minCommissionRate) continue;
-            if (rating < minRating) continue;
+            if (feedbackPct < minFeedbackPct) continue; // e.g. < 80%
             if (salesCount < minSales) continue;
             if (discountPercent <= 0) continue;
 
             const aliexpressProductId = String(item.product_id);
-            const cutOffDate = new Date();
-            cutOffDate.setDate(cutOffDate.getDate() - dedupDays);
-
-            const existing = await prisma.product.findFirst({
-              where: { aliexpressProductId, channelId: channel.id, createdAt: { gte: cutOffDate } },
-            });
-
-            if (existing) { duplicates++; continue; }
+            const dedupKey = `${aliexpressProductId}_${channel.id}`;
+            if (existingSet.has(dedupKey)) { duplicates++; continue; }
 
             let affiliateLink = item.product_detail_url || '';
             try {
@@ -123,7 +136,7 @@ export async function scanProducts(): Promise<ScanResult> {
                   imageUrl: item.product_main_image_url || '',
                   categoryId: String(categoryId),
                   commissionRate,
-                  rating,
+                  rating: feedbackPct, // stored as 0-100 feedback %
                   salesCount,
                   status: 'pending',
                   channelId: channel.id,
@@ -131,8 +144,8 @@ export async function scanProducts(): Promise<ScanResult> {
                 },
               });
               newProducts++;
+              existingSet.add(dedupKey);
             } catch {
-              // Likely a unique constraint violation (product exists in another channel)
               duplicates++;
             }
           }
@@ -143,6 +156,18 @@ export async function scanProducts(): Promise<ScanResult> {
         }
       }
     }
+
+    // Advance the page offset for next run (rotate 1→2→3→4→5→1)
+    try {
+      await prisma.setting.upsert({
+        where: { key: 'scan_page_offset' },
+        update: { value: String(nextPage) },
+        create: { key: 'scan_page_offset', value: String(nextPage) },
+      });
+    } catch {
+      // Non-critical — ignore
+    }
+
   } catch (globalError) {
     const msg = `Global scan error: ${(globalError as Error).message}`;
     errors.push(msg);

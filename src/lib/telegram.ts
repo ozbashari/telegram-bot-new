@@ -3,19 +3,22 @@ import { Product } from '@prisma/client';
 import { prisma } from './db';
 import { escapeMarkdownV2 } from './markdown-escape';
 
+const CAPTION_LIMIT = 1024; // Telegram sendPhoto caption limit
+
 /**
  * Builds the post caption in Telegram's MarkdownV2 format.
+ * Automatically truncates to stay within Telegram's 1024-char sendPhoto limit.
  */
 export function buildCaption(product: Product): string {
   const title = escapeMarkdownV2(product.titleHe || product.titleOriginal);
   const body = escapeMarkdownV2(product.bodyHe || '');
-  
+
   let bullets = '';
   try {
     if (product.bulletsHe) {
       const parsed = JSON.parse(product.bulletsHe);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        bullets = parsed.map(b => `✅ ${escapeMarkdownV2(b)}`).join('\n');
+        bullets = parsed.map((b: string) => `✅ ${escapeMarkdownV2(b)}`).join('\n');
       }
     }
   } catch {
@@ -27,20 +30,31 @@ export function buildCaption(product: Product): string {
   const discount = escapeMarkdownV2(String(product.discountPercent));
   const cta = escapeMarkdownV2(product.ctaHe || '');
 
-  let caption = `*${title}*\n\n${body}`;
-  if (bullets) {
-    caption += `\n\n${bullets}`;
-  }
-  caption += `\n\n💰 *מחיר: ${priceNew}* ~${priceOld}~\n🔥 חיסכון של ${discount}%`;
-  if (cta) {
-    caption += `\n\n${cta}`;
-  }
-
-  // Append text link directly inside the caption to guarantee visibility
   const rawLink = product.affiliateLink || product.imageUrl;
   const escapedLink = rawLink.replace(/([\)\\])/g, '\\$1');
-  caption += `\n\n*🛒 [לרכישה לחץ כאן](${escapedLink})*`;
+  const linkSuffix = `\n\n*🛒 [לרכישה לחץ כאן](${escapedLink})*`;
+  const pricePart = `\n\n💰 *מחיר: ${priceNew}* ~${priceOld}~\n🔥 חיסכון של ${discount}%`;
+  const ctaPart = cta ? `\n\n${cta}` : '';
 
+  // Build full caption
+  let caption = `*${title}*\n\n${body}`;
+  if (bullets) caption += `\n\n${bullets}`;
+  caption += pricePart + ctaPart;
+
+  // If exceeds limit, drop bullets first (they're optional)
+  if (caption.length + linkSuffix.length > CAPTION_LIMIT && bullets) {
+    caption = `*${title}*\n\n${body}` + pricePart + ctaPart;
+  }
+
+  // If still too long, truncate body to fit
+  if (caption.length + linkSuffix.length > CAPTION_LIMIT) {
+    const fixedLen = `*${title}*\n\n`.length + pricePart.length + ctaPart.length + linkSuffix.length + 2;
+    const maxBodyLen = Math.max(0, CAPTION_LIMIT - fixedLen);
+    const truncatedBody = body.slice(0, maxBodyLen) + (body.length > maxBodyLen ? '…' : '');
+    caption = `*${title}*\n\n${truncatedBody}` + pricePart + ctaPart;
+  }
+
+  caption += linkSuffix;
   return caption;
 }
 
@@ -221,7 +235,7 @@ export async function sendTelegramTest(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: channel.telegramChatId,
-        text: 'הבוט פעיל ✅',
+        text: '\u05d4\u05d1\u05d5\u05d8 \u05e4\u05e2\u05d9\u05dc \u2705',
       }),
       cache: 'no-store',
     });

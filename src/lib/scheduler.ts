@@ -24,6 +24,8 @@ export interface OrchestrationResult {
  * 2. Generates Hebrew copywriting using Gemini for pending products lacking it.
  * 3. Evaluates active channels and publishes the oldest pending product to Telegram if the interval allows.
  */
+const MAX_AI_PER_RUN = 10;
+
 export async function runOrchestrator(): Promise<OrchestrationResult> {
   const errors: string[] = [];
   let scanResult;
@@ -53,6 +55,8 @@ export async function runOrchestrator(): Promise<OrchestrationResult> {
           { titleHe: '' },
         ],
       },
+      take: MAX_AI_PER_RUN, // Limit per cron run to avoid Gemini quota exhaustion
+      orderBy: { createdAt: 'asc' },
     });
 
     for (const product of productsToGenerate) {
@@ -98,18 +102,19 @@ export async function runOrchestrator(): Promise<OrchestrationResult> {
         continue;
       }
 
-      // Select the oldest pending product with generated copywriting
+      // Select oldest ready product (pending with copy, or failed with retries left)
       try {
-        const nextProduct = await prisma.product.findFirst({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const prismaAny = prisma as any;
+        const nextProduct = await prismaAny.product.findFirst({
           where: {
             channelId: channel.id,
-            status: 'pending',
-            titleHe: { not: null },
-            NOT: { titleHe: '' },
+            OR: [
+              { status: 'pending', titleHe: { not: null }, NOT: { titleHe: '' } },
+              { status: 'publish_failed', retryCount: { lt: 3 }, titleHe: { not: null } },
+            ],
           },
-          orderBy: {
-            createdAt: 'asc',
-          },
+          orderBy: { createdAt: 'asc' },
         });
 
         if (nextProduct) {
@@ -125,6 +130,16 @@ export async function runOrchestrator(): Promise<OrchestrationResult> {
             const errorMsg = `Telegram publishing failed for product ${nextProduct.id} on channel "${channel.name}": ${pubResult.error || 'Unknown error'}`;
             console.error(errorMsg);
             errors.push(errorMsg);
+            // Track failure for retry
+            const currentRetry: number = nextProduct.retryCount ?? 0;
+            await prismaAny.product.update({
+              where: { id: nextProduct.id },
+              data: {
+                status: currentRetry + 1 >= 3 ? 'rejected' : 'publish_failed',
+                retryCount: { increment: 1 },
+                lastError: pubResult.error || 'Unknown Telegram error',
+              },
+            });
           }
         } else {
           console.log(`No pending generated products available for channel "${channel.name}"`);

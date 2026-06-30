@@ -46,6 +46,10 @@ export default function SettingsPage() {
   // Category input helper (shows as comma-separated string)
   const [categoryInput, setCategoryInput] = useState('');
 
+  // Test connection state per channel
+  const [testingChannelId, setTestingChannelId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; msg: string }>>({});
+
   // Fetch settings and channels
   const fetchData = async () => {
     try {
@@ -217,6 +221,33 @@ export default function SettingsPage() {
       }
     } catch (err) {
       setErrorMsg((err as Error).message || 'עדכון מהיר נכשל.');
+    }
+  };
+
+  // Test Telegram channel connection
+  const handleTestConnection = async (channelId: string) => {
+    try {
+      setTestingChannelId(channelId);
+      const res = await fetch('/api/telegram/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId }),
+      });
+      const data = await res.json();
+      setTestResults(prev => ({
+        ...prev,
+        [channelId]: {
+          success: data.success,
+          msg: data.success ? '✅ חיבור תקין' : `❌ ${data.error || 'שגיאה'}`,
+        },
+      }));
+    } catch (err) {
+      setTestResults(prev => ({
+        ...prev,
+        [channelId]: { success: false, msg: `❌ ${(err as Error).message}` },
+      }));
+    } finally {
+      setTestingChannelId(null);
     }
   };
 
@@ -393,7 +424,15 @@ export default function SettingsPage() {
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}
+                          disabled={testingChannelId === channel.id}
+                          onClick={() => handleTestConnection(channel.id)}
+                        >
+                          {testingChannelId === channel.id ? '...' : '🔌 בדוק'}
+                        </button>
                         <button className="btn btn-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem' }} onClick={() => handleEditChannelClick(channel)}>
                           ערוך
                         </button>
@@ -402,6 +441,11 @@ export default function SettingsPage() {
                         </button>
                       </div>
                     </div>
+                    {testResults[channel.id] && (
+                      <div style={{ paddingTop: '0.5rem', fontSize: '0.8rem', color: testResults[channel.id].success ? '#34d399' : '#f87171' }}>
+                        {testResults[channel.id].msg}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -489,15 +533,10 @@ export default function SettingsPage() {
             </div>
 
             <div className="form-group" style={{ marginTop: '2rem' }}>
-              <label className="form-label">תבנית עיצוב פוסט סופי בטלגרם (Post Template)</label>
-              <textarea className="form-input" style={{ minHeight: '140px' }} value={settings.ai_post_template || ''} onChange={(e) => handleSettingChange('ai_post_template', e.target.value)} placeholder="לדוגמה:
-*{title}*
-{body}
-✅ {bullet1}
-...
-" />
+              <label className="form-label">תבנית נתוני מוצר ל-Gemini (User Prompt)</label>
+              <textarea className="form-input" style={{ minHeight: '140px' }} value={settings.ai_post_template || ''} onChange={(e) => handleSettingChange('ai_post_template', e.target.value)} placeholder={`מוצר: {title_original}\nמחיר מקורי: \${price_original}\nמחיר מבצע: \${price_discounted}\nהנחה: {discount_percent}%\nדירוג: {rating}/5 ({sales_count} מכירות)`} />
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>
-                מבנה הודעת הטלגרם. השתמש במאקרו-משתנים שיורכבו דינמית בפרסום.
+                זהו ה-User Prompt שנשלח ל-Gemini עבור כל מוצר. משתנים זמינים: {'{title_original}'}, {'{price_original}'}, {'{price_discounted}'}, {'{discount_percent}'}, {'{rating}'}, {'{sales_count}'}.
               </p>
             </div>
 
@@ -548,29 +587,37 @@ export default function SettingsPage() {
                   <div className={`toggle-switch ${editingChannel.autoPublish ? 'toggle-active' : ''}`} style={{ width: '38px', height: '20px' }} />
                   <span style={{ fontSize: '0.85rem' }}>פרסום אוטומטי</span>
                 </div>
-
                 <div className="toggle-container" onClick={() => setEditingChannel((prev) => prev ? { ...prev, isActive: !prev.isActive } : null)}>
-                  <div className={`toggle-switch ${editingChannel.isActive ? 'toggle-active' : ''}`} style={{ width: '38px', height: '20px' }} />
+                  <div className={`toggle-switch ${editingChannel.isActive !== false ? 'toggle-active' : ''}`} style={{ width: '38px', height: '20px' }} />
                   <span style={{ fontSize: '0.85rem' }}>ערוץ פעיל</span>
                 </div>
               </div>
 
-              <div className="form-group" style={{ marginBottom: '2rem' }}>
-                <div className="slider-container">
-                  <div className="slider-info">
-                    <span>מרווח זמן לפרסום סדרתי (שעות)</span>
-                    <span className="slider-val">{editingChannel.publishIntervalHours} שעות</span>
-                  </div>
-                  <input type="range" min="1" max="24" step="1" className="slider-input" value={editingChannel.publishIntervalHours || 6} onChange={(e) => setEditingChannel((prev) => prev ? { ...prev, publishIntervalHours: Number(e.target.value) } : null)} />
-                </div>
+              <div className="form-group">
+                <label className="form-label">תדירות פרסום (שעות בין פרסומים)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="72"
+                  className="form-input"
+                  value={editingChannel.publishIntervalHours ?? 4}
+                  onChange={(e) => setEditingChannel((prev) => prev ? { ...prev, publishIntervalHours: parseInt(e.target.value) || 4 } : null)}
+                />
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                  כמה שעות לחכות בין פרסום אחד לאחר.
+                </p>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', borderTop: '1px solid var(--border-color)', paddingTop: '1.25rem' }}>
-                <button type="button" className="btn btn-secondary" onClick={() => setShowChannelModal(false)}>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1.5rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => { setShowChannelModal(false); setEditingChannel(null); }}
+                >
                   ביטול
                 </button>
-                <button type="submit" className={`btn btn-primary ${saving ? 'btn-disabled' : ''}`} disabled={saving}>
-                  {saving ? 'שומר ערוץ...' : 'שמור ערוץ'}
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? 'שומר...' : (editingChannel.id ? 'עדכן ערוץ' : 'צור ערוץ')}
                 </button>
               </div>
             </form>

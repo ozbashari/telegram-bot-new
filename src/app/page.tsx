@@ -7,8 +7,12 @@ import Link from 'next/link';
 interface DashboardStats {
   publishedToday: number;
   pendingCount: number;
+  failedCount: number;
   totalPublished: number;
   estimatedCommission: number;
+  realCommission: number;
+  realOrdersCount: number;
+  completedOrdersCount: number;
 }
 
 interface RecentProduct {
@@ -26,14 +30,27 @@ interface ChannelSummary {
   isActive: boolean;
   autoPublish: boolean;
   lastPublishedAt: string | null;
+  publishIntervalHours?: number;
   pendingCount: number;
 }
 
+interface PerformanceData {
+  clicks: number;
+  clicksAvailable: boolean;
+  paidOrders: number;
+  completedOrders: number;
+  paidEstimatedEarnings: number;
+  completedEstimatedEarnings: number;
+  period: { days: number };
+}
+
 export default function Dashboard() {
-  const [stats, setStats] = useState<DashboardStats>({ publishedToday: 0, pendingCount: 0, totalPublished: 0, estimatedCommission: 0 });
+  const [stats, setStats] = useState<DashboardStats>({ publishedToday: 0, pendingCount: 0, failedCount: 0, totalPublished: 0, estimatedCommission: 0, realCommission: 0, realOrdersCount: 0, completedOrdersCount: 0 });
   const [botActive, setBotActive] = useState(true);
   const [recentPublished, setRecentPublished] = useState<RecentProduct[]>([]);
   const [channelsSummary, setChannelsSummary] = useState<ChannelSummary[]>([]);
+  const [perf, setPerf] = useState<PerformanceData | null>(null);
+  const [isRefreshingPerf, setIsRefreshingPerf] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isScanning, setIsScanning] = useState(false);
   const [isTogglingBot, setIsTogglingBot] = useState(false);
@@ -56,8 +73,22 @@ export default function Dashboard() {
     }
   };
 
+  const fetchPerf = async (refresh = false) => {
+    try {
+      setIsRefreshingPerf(true);
+      const res = await fetch(`/api/performance?days=7${refresh ? '&refresh=true' : ''}`);
+      const data = await res.json();
+      if (data.success) setPerf(data);
+    } catch (err) {
+      console.error('Error fetching performance:', err);
+    } finally {
+      setIsRefreshingPerf(false);
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchPerf();
   }, []);
 
   const handleToggleBot = async () => {
@@ -179,13 +210,67 @@ export default function Dashboard() {
           <div style={{ position: 'absolute', left: '-10px', bottom: '-15px', fontSize: '5rem', opacity: 0.03, userSelect: 'none' }}>✅</div>
         </div>
 
-        {/* Estimated Commission */}
+        {/* Real Commission */}
         <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative', overflow: 'hidden' }}>
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>עמלה משוערת</span>
-          <span style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--accent-green)', lineHeight: 1.1 }}>${stats.estimatedCommission.toFixed(2)}</span>
-          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>ממוצע עמלה × מספר פרסומים</span>
+          <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>עמלה אמיתית (30 יום)</span>
+          <span style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--accent-green)', lineHeight: 1.1 }}>${stats.realCommission.toFixed(2)}</span>
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>{stats.completedOrdersCount} הזמנות מאושרות מתוך {stats.realOrdersCount}</span>
           <div style={{ position: 'absolute', left: '-10px', bottom: '-15px', fontSize: '5rem', opacity: 0.03, userSelect: 'none' }}>💰</div>
         </div>
+
+        {/* Failed products */}
+        {stats.failedCount > 0 && (
+          <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative', overflow: 'hidden', borderColor: 'rgba(239,68,68,0.3)' }}>
+            <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 500 }}>נכשלו בפרסום</span>
+            <span style={{ fontSize: '2.5rem', fontWeight: 800, color: '#ef4444', lineHeight: 1.1 }}>{stats.failedCount}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>יופרסמו שוב אוטומטית (עד 3 ניסיונות)</span>
+            <div style={{ position: 'absolute', left: '-10px', bottom: '-15px', fontSize: '5rem', opacity: 0.03, userSelect: 'none' }}>⚠️</div>
+          </div>
+        )}
+      </div>
+
+      {/* AliExpress Performance — כמו בדשבורד של AliExpress */}
+      <div className="glass-card" style={{ padding: '1.25rem 1.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+          <h3 style={{ fontSize: '1.1rem', margin: 0 }}>📊 ביצועי AliExpress — 7 ימים אחרונים</h3>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: '0.8rem', padding: '0.35rem 0.85rem' }}
+            onClick={() => fetchPerf(true)}
+            disabled={isRefreshingPerf}
+          >
+            {isRefreshingPerf ? '...' : '🔄 רענן מ-AliExpress'}
+          </button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem' }}>
+          <div style={{ background: 'rgba(59,130,246,0.08)', borderRadius: '8px', padding: '0.9rem 1rem', borderBottom: '3px solid #3b82f6' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '0.25rem' }}>Paid orders</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#fff' }}>{perf?.paidOrders ?? '—'}</div>
+          </div>
+          <div style={{ background: 'rgba(16,185,129,0.08)', borderRadius: '8px', padding: '0.9rem 1rem', borderBottom: '3px solid #10b981' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '0.25rem' }}>Paid estimated earnings (USD)</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#10b981' }}>${perf ? perf.paidEstimatedEarnings.toFixed(2) : '—'}</div>
+          </div>
+          <div style={{ background: 'rgba(245,158,11,0.08)', borderRadius: '8px', padding: '0.9rem 1rem', borderBottom: '3px solid #f59e0b' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '0.25rem' }}>Completed orders</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#fff' }}>{perf?.completedOrders ?? '—'}</div>
+          </div>
+          <div style={{ background: 'rgba(249,115,22,0.08)', borderRadius: '8px', padding: '0.9rem 1rem', borderBottom: '3px solid #f97316' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '0.25rem' }}>Completed estimated earnings (USD)</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#f97316' }}>${perf ? perf.completedEstimatedEarnings.toFixed(2) : '—'}</div>
+          </div>
+          <div style={{ background: 'rgba(239,68,68,0.08)', borderRadius: '8px', padding: '0.9rem 1rem', borderBottom: '3px solid #ef4444' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginBottom: '0.25rem' }}>Clicks</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#fff' }}>
+              {perf ? (perf.clicksAvailable ? perf.clicks : <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>ראה AliExpress</span>) : '—'}
+            </div>
+          </div>
+        </div>
+        {perf && !perf.clicksAvailable && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.5rem' }}>
+            * נתוני קליקים דורשים אישור Traffic Report ב-AliExpress Affiliate Portal
+          </p>
+        )}
       </div>
 
       {/* Automation Bot Settings & Operations */}
