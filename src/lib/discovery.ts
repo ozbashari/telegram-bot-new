@@ -131,7 +131,7 @@ export async function scanProducts(): Promise<ScanResult> {
                 },
               });
               newProducts++;
-            } catch (createError) {
+            } catch {
               // Likely a unique constraint violation (product exists in another channel)
               duplicates++;
             }
