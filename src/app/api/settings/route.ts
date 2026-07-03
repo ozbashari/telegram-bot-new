@@ -8,6 +8,9 @@ export async function GET() {
     rawSettings.forEach((item: { key: string; value: string }) => {
       settings[item.key] = item.value;
     });
+    if (process.env.CRON_SECRET && !settings['cron_secret']) {
+      settings['cron_secret'] = process.env.CRON_SECRET;
+    }
     const channels = await prisma.channel.findMany({ orderBy: { createdAt: 'desc' } });
     return NextResponse.json({ success: true, settings, channels });
   } catch (error) {
