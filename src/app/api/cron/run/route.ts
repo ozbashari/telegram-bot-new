@@ -13,14 +13,20 @@ async function handleCronRun(req: NextRequest) {
 
     // Vercel's own cron sends x-vercel-cron:1 header (no Authorization).
     // GitHub Actions sends Authorization: Bearer <secret>.
-    // Allow both; only reject if secret is configured AND neither condition matches.
     const isVercelCron = req.headers.get('x-vercel-cron') === '1';
     const authHeader = req.headers.get('authorization');
     const token = authHeader?.replace('Bearer ', '');
-    const isValidToken = !cronSecret || token === cronSecret;
 
-    if (!isVercelCron && !isValidToken) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    if (!isVercelCron) {
+      if (!cronSecret) {
+        return NextResponse.json(
+          { success: false, error: 'Unauthorized: cron_secret not configured' },
+          { status: 401 }
+        );
+      }
+      if (token !== cronSecret) {
+        return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+      }
     }
 
     const result = await runOrchestrator();

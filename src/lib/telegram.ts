@@ -139,7 +139,8 @@ export async function publishToTelegram(
     console.warn(`sendPhoto failed for product ${productId} on channel ${channel.name}. Error: ${resultData.description}. Retrying with sendMessage fallback.`);
 
     const textUrl = `https://api.telegram.org/bot${botToken}/sendMessage`;
-    const photoLink = `[📸](${escapeMarkdownV2(product.imageUrl)})`;
+    const escapedImageUrl = product.imageUrl.replace(/([\)\\])/g, '\\$1');
+    const photoLink = `[📸](${escapedImageUrl})`;
     const textBody = `${photoLink}\n\n${captionText}`;
 
     response = await fetch(textUrl, {

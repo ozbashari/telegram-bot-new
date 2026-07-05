@@ -116,13 +116,19 @@ export async function scanProducts(): Promise<ScanResult> {
             const dedupKey = `${aliexpressProductId}_${channel.id}`;
             if (existingSet.has(dedupKey)) { duplicates++; continue; }
 
-            let affiliateLink = item.product_detail_url || '';
+            let affiliateLink = '';
             try {
               if (item.product_detail_url) {
                 affiliateLink = await generateAffiliateLink(item.product_detail_url);
               }
             } catch (linkError) {
-              console.warn('Link generation failed:', (linkError as Error).message);
+              errors.push(`Affiliate link generation failed for product ${item.product_id}: ${(linkError as Error).message}`);
+              continue;
+            }
+
+            if (!affiliateLink) {
+              errors.push(`Affiliate link generation returned empty for product ${item.product_id}`);
+              continue;
             }
 
             try {

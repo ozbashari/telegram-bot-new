@@ -44,6 +44,26 @@ export async function runOrchestrator(): Promise<OrchestrationResult> {
     console.error(errorMsg);
     errors.push(errorMsg);
   }
+  // Central check: if bot is inactive, do not run AI generation and publishing
+  try {
+    const botActiveSetting = await prisma.setting.findUnique({
+      where: { key: 'bot_active' },
+    });
+    const botActive = botActiveSetting?.value !== 'false';
+    if (!botActive) {
+      console.log('Bot is disabled (bot_active=false). Skipping AI generation and publishing phases.');
+      return {
+        success: errors.length === 0,
+        scanResult,
+        generatedCount,
+        publishedCount,
+        publishedDetails,
+        errors,
+      };
+    }
+  } catch (settingError) {
+    console.error('Failed to read bot_active setting:', settingError);
+  }
 
   // Step 2: Generate Hebrew copywriting for pending products that lack copy
   try {
@@ -118,6 +138,22 @@ export async function runOrchestrator(): Promise<OrchestrationResult> {
         });
 
         if (nextProduct) {
+          // Optimistic lock: attempt to update status to 'publishing' to claim the product
+          const updateResult = await prismaAny.product.updateMany({
+            where: {
+              id: nextProduct.id,
+              status: nextProduct.status,
+            },
+            data: {
+              status: 'publishing',
+            },
+          });
+
+          if (updateResult.count === 0) {
+            console.log(`Product ${nextProduct.id} was claimed by another scheduler instance. Skipping.`);
+            continue;
+          }
+
           const pubResult = await publishToTelegram(nextProduct.id, channel.id);
           if (pubResult.success) {
             publishedCount++;
