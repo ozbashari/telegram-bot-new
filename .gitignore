@@ -38,3 +38,10 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# Claude session artifacts
+claude-daily-review-*.html
+getset*.mjs
+qa_plan.md
+scanning_guide.md
+architecture_specs.md

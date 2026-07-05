@@ -30,7 +30,7 @@ export function buildCaption(product: Product): string {
   const discount = escapeMarkdownV2(String(product.discountPercent));
   const cta = escapeMarkdownV2(product.ctaHe || '');
 
-  const rawLink = product.affiliateLink || product.imageUrl;
+  const rawLink = product.affiliateLink || '';
   const escapedLink = rawLink.replace(/([\)\\])/g, '\\$1');
   const linkSuffix = `\n\n*🛒 [לרכישה לחץ כאן](${escapedLink})*`;
   const pricePart = `\n\n💰 *מחיר: ${priceNew}* ~${priceOld}~\n🔥 חיסכון של ${discount}%`;
@@ -78,10 +78,15 @@ export async function publishToTelegram(
       return { success: false, error: 'Channel not found' };
     }
 
+    // Guard: reject publish if affiliate link is missing — button would link to CDN image
+    if (!product.affiliateLink) {
+      return { success: false, error: 'Missing affiliate link — product not monetized. Re-run scan or manual add.' };
+    }
+
     const captionText = buildCaption(product);
     const botToken = channel.botToken;
     const chatId = channel.telegramChatId;
-    const affiliateUrl = product.affiliateLink || product.imageUrl;
+    const affiliateUrl = product.affiliateLink;
 
     const inlineKeyboard = {
       inline_keyboard: [[
