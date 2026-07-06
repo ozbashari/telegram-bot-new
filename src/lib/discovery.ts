@@ -4,16 +4,27 @@ import { callAliExpress } from './aliexpress-client';
 import { generateAffiliateLink } from './monetization';
 
 const MAX_NEW_PER_SCAN = 10;
-
-// AliExpress evaluate_rate is a POSITIVE FEEDBACK PERCENTAGE (0-100), not a 5-star rating.
-// Default min is 80% positive (good enough quality).
 const DEFAULT_MIN_FEEDBACK_PCT = 80;
+
+// Rotate sort orders to get product diversity across runs
+const SORT_ORDERS = [
+  'LAST_VOLUME_DESC',   // bestsellers
+  'DISCOUNT_DESC',      // biggest discounts
+  'SALE_PRICE_ASC',     // cheapest first
+  'COMMISSION_RATE_DESC', // highest commission
+];
 
 export interface ScanResult {
   scanned: number;
   new: number;
   duplicates: number;
   errors: string[];
+  // breakdown: why products were skipped
+  filteredByCommission: number;
+  filteredByRating: number;
+  filteredBySales: number;
+  filteredByDiscount: number;
+  filteredByNoLink: number;
 }
 
 export async function scanProducts(): Promise<ScanResult> {
@@ -21,6 +32,11 @@ export async function scanProducts(): Promise<ScanResult> {
   let scanned = 0;
   let newProducts = 0;
   let duplicates = 0;
+  let filteredByCommission = 0;
+  let filteredByRating = 0;
+  let filteredBySales = 0;
+  let filteredByDiscount = 0;
+  let filteredByNoLink = 0;
 
   try {
     const dbSettings = await prisma.setting.findMany();
@@ -28,24 +44,25 @@ export async function scanProducts(): Promise<ScanResult> {
 
     const botActive = settingsMap.get('bot_active') !== 'false';
     const minCommissionRate = parseFloat(settingsMap.get('min_commission_rate') || '2');
-    // evaluate_rate is feedback %, stored as 0-100. Default: 80% positive.
     const minFeedbackPct = parseFloat(settingsMap.get('min_rating') || String(DEFAULT_MIN_FEEDBACK_PCT));
     const minSales = parseInt(settingsMap.get('min_sales') || '10');
     const dedupDays = parseInt(settingsMap.get('dedup_days') || '30');
-    // scan_page_offset rotates which page we fetch, so we don't always see the same products
     const currentPage = parseInt(settingsMap.get('scan_page_offset') || '1');
-    const nextPage = currentPage >= 5 ? 1 : currentPage + 1; // Rotate pages 1-5
+    const nextPage = currentPage >= 5 ? 1 : currentPage + 1;
+
+    // Rotate sort order based on page offset so each run fetches different products
+    const sortOrder = SORT_ORDERS[(currentPage - 1) % SORT_ORDERS.length];
 
     if (!botActive) {
-      return { scanned: 0, new: 0, duplicates: 0, errors: ['Bot Scan Engine is disabled.'] };
+      return { scanned: 0, new: 0, duplicates: 0, errors: ['Bot Scan Engine is disabled.'], filteredByCommission: 0, filteredByRating: 0, filteredBySales: 0, filteredByDiscount: 0, filteredByNoLink: 0 };
     }
 
     const activeChannels = await prisma.channel.findMany({ where: { isActive: true } });
     if (activeChannels.length === 0) {
-      return { scanned: 0, new: 0, duplicates: 0, errors: ['No active channels found.'] };
+      return { scanned: 0, new: 0, duplicates: 0, errors: ['No active channels found.'], filteredByCommission: 0, filteredByRating: 0, filteredBySales: 0, filteredByDiscount: 0, filteredByNoLink: 0 };
     }
 
-    // Pre-load recently seen products to avoid N+1 dedup queries
+    // Pre-load recently seen products for dedup (avoid N+1)
     const cutOffDate = new Date();
     cutOffDate.setDate(cutOffDate.getDate() - dedupDays);
     const recentProducts = await prisma.product.findMany({
@@ -83,9 +100,9 @@ export async function scanProducts(): Promise<ScanResult> {
 
           const rawResponse = await callAliExpress('aliexpress.affiliate.product.query', {
             category_ids: categoryId,
-            sort: 'LAST_VOLUME_DESC', // Sort by bestsellers — better commission & quality
+            sort: sortOrder,
             fields,
-            page_size: '50',          // Fetch more to survive strict filters
+            page_size: '50',
             page_no: String(currentPage),
             target_currency: 'USD',
             target_language: 'EN',
@@ -100,17 +117,16 @@ export async function scanProducts(): Promise<ScanResult> {
             scanned++;
 
             const commissionRate = parseFloat(String(item.commission_rate || 0));
-            // evaluate_rate = positive feedback % (e.g. 97.3 means 97.3% positive reviews)
             const feedbackPct = parseFloat(String(item.evaluate_rate || 0));
             const salesCount = parseInt(String(item.lastest_volume || 0)) || 0;
-            // discount may come as "10%" or "10" — strip % sign
             const discountStr = String(item.discount || '0').replace('%', '').trim();
             const discountPercent = parseInt(discountStr) || 0;
 
-            if (commissionRate < minCommissionRate) continue;
-            if (feedbackPct < minFeedbackPct) continue; // e.g. < 80%
-            if (salesCount < minSales) continue;
-            if (discountPercent <= 0) continue;
+            // Filter with tracking
+            if (commissionRate < minCommissionRate) { filteredByCommission++; continue; }
+            if (feedbackPct < minFeedbackPct) { filteredByRating++; continue; }
+            if (salesCount < minSales) { filteredBySales++; continue; }
+            if (discountPercent <= 0) { filteredByDiscount++; continue; }
 
             const aliexpressProductId = String(item.product_id);
             const dedupKey = `${aliexpressProductId}_${channel.id}`;
@@ -122,12 +138,14 @@ export async function scanProducts(): Promise<ScanResult> {
                 affiliateLink = await generateAffiliateLink(item.product_detail_url);
               }
             } catch (linkError) {
-              errors.push(`Affiliate link generation failed for product ${item.product_id}: ${(linkError as Error).message}`);
+              filteredByNoLink++;
+              errors.push(`Affiliate link failed for ${item.product_id}: ${(linkError as Error).message}`);
               continue;
             }
 
             if (!affiliateLink) {
-              errors.push(`Affiliate link generation returned empty for product ${item.product_id}`);
+              filteredByNoLink++;
+              errors.push(`Empty affiliate link for product ${item.product_id}`);
               continue;
             }
 
@@ -142,7 +160,7 @@ export async function scanProducts(): Promise<ScanResult> {
                   imageUrl: item.product_main_image_url || '',
                   categoryId: String(categoryId),
                   commissionRate,
-                  rating: feedbackPct, // stored as 0-100 feedback %
+                  rating: feedbackPct,
                   salesCount,
                   status: 'pending',
                   channelId: channel.id,
@@ -163,7 +181,7 @@ export async function scanProducts(): Promise<ScanResult> {
       }
     }
 
-    // Advance the page offset for next run (rotate 1→2→3→4→5→1)
+    // Advance page + sort rotation
     try {
       await prisma.setting.upsert({
         where: { key: 'scan_page_offset' },
@@ -171,7 +189,7 @@ export async function scanProducts(): Promise<ScanResult> {
         create: { key: 'scan_page_offset', value: String(nextPage) },
       });
     } catch {
-      // Non-critical — ignore
+      // Non-critical
     }
 
   } catch (globalError) {
@@ -180,5 +198,5 @@ export async function scanProducts(): Promise<ScanResult> {
     console.error(msg);
   }
 
-  return { scanned, new: newProducts, duplicates, errors };
+  return { scanned, new: newProducts, duplicates, errors, filteredByCommission, filteredByRating, filteredBySales, filteredByDiscount, filteredByNoLink };
 }

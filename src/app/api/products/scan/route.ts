@@ -26,7 +26,20 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await scanProducts();
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({
+      success: true,
+      scanned: result.scanned,
+      new: result.new,
+      duplicates: result.duplicates,
+      errors: result.errors,
+      breakdown: {
+        filteredByCommission: result.filteredByCommission,
+        filteredByRating: result.filteredByRating,
+        filteredBySales: result.filteredBySales,
+        filteredByDiscount: result.filteredByDiscount,
+        filteredByNoLink: result.filteredByNoLink,
+      },
+    });
   } catch (error) {
     console.error('Scan endpoint failed:', error);
     return NextResponse.json(

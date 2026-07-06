@@ -12,15 +12,23 @@ export const dynamic = 'force-dynamic';
  */
 function extractAliExpressProductId(input: string): string | null {
   const cleanInput = input.trim();
-  if (/^\d+$/.test(cleanInput)) {
-    return cleanInput;
+
+  // Raw numeric ID
+  if (/^\d{10,20}$/.test(cleanInput)) return cleanInput;
+
+  // Standard patterns: /item/12345.html  /item/12345  /12345.html
+  const patterns = [
+    /\/item\/(\d{10,20})\.html/i,
+    /\/item\/(\d{10,20})/i,
+    /[?&]productId=(\d{10,20})/i,
+    /\/(\d{10,20})\.html/i,
+    /\/(\d{10,20})(?:[/?#]|$)/i,
+  ];
+  for (const re of patterns) {
+    const m = cleanInput.match(re);
+    if (m) return m[1];
   }
-  
-  // Extract number from /item/12345.html or /item/12345 or similar patterns
-  const match = cleanInput.match(/\/item\/(\d+)\.html/i) || 
-                cleanInput.match(/\/item\/(\d+)\b/i) || 
-                cleanInput.match(/\/(\d+)\.html/i);
-  return match ? match[1] : null;
+  return null;
 }
 
 export async function POST(req: NextRequest) {
@@ -34,14 +42,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Resolve redirect if it's a short link (s.click.aliexpress / a.aliexpress)
+    // 1. Resolve short/redirect links (s.click, a.aliexpress, bit.ly, etc.)
     let targetUrl = url.trim();
-    if (targetUrl.includes('s.click.aliexpress.com') || targetUrl.includes('a.aliexpress.com')) {
+    const isShortLink =
+      targetUrl.includes('s.click.aliexpress.com') ||
+      targetUrl.includes('a.aliexpress.com') ||
+      targetUrl.includes('aliexpress.onelink') ||
+      /https?:\/\/[^/]{1,20}\.[a-z]{2,4}\/[A-Za-z0-9_-]{4,15}$/.test(targetUrl);
+
+    if (isShortLink) {
       try {
-        const res = await fetch(targetUrl, { method: 'GET', redirect: 'follow' });
-        targetUrl = res.url;
+        const res = await fetch(targetUrl, {
+          method: 'GET',
+          redirect: 'follow',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            Accept: 'text/html,application/xhtml+xml',
+          },
+        });
+        if (res.url && res.url !== targetUrl) targetUrl = res.url;
       } catch (err) {
-        console.error('Failed to resolve short URL redirect:', err);
+        console.warn('Failed to resolve redirect, trying original URL:', (err as Error).message);
       }
     }
 
@@ -49,56 +71,105 @@ export async function POST(req: NextRequest) {
     const productId = extractAliExpressProductId(targetUrl);
     if (!productId) {
       return NextResponse.json(
-        { success: false, error: 'כתובת ה-URL אינה תקינה או שלא ניתן לחלץ מזהה מוצר של AliExpress' },
+        {
+          success: false,
+          error: `לא הצלחנו לחלץ מזהה מוצר מהכתובת. נסה להדביק את כתובת המוצר המלאה (https://www.aliexpress.com/item/XXXXXXXX.html) או את המספר בלבד.`,
+        },
         { status: 400 }
       );
     }
 
-    // 3. Query details from AliExpress
+    // 3. Try fetching product details from AliExpress
     const fields = [
       'product_id', 'product_title', 'sale_price', 'original_price',
       'discount', 'product_main_image_url', 'commission_rate',
       'evaluate_rate', 'product_detail_url', 'lastest_volume',
     ].join(',');
 
-    let rawResponse;
+    let item: Record<string, unknown> | null = null;
+    let lastApiError = '';
+
+    // Attempt 1: product.detail.get (direct lookup by ID)
     try {
-      rawResponse = await callAliExpress('aliexpress.affiliate.product.detail.get', {
+      const raw = await callAliExpress('aliexpress.affiliate.product.detail.get', {
         product_ids: productId,
         fields,
       });
-    } catch (aliError) {
-      console.warn('aliexpress.affiliate.product.detail.get failed, trying fallback query:', (aliError as Error).message);
-      // Fallback query method
-      rawResponse = await callAliExpress('aliexpress.affiliate.product.query', {
-        product_ids: productId,
-        fields,
-        page_size: '1',
-        page_no: '1',
-      });
+      const resp = raw?.aliexpress_affiliate_product_detail_get_response?.resp_result;
+      if (resp?.resp_code === 200 || resp?.resp_code === '200') {
+        item = resp?.result?.products?.product?.[0] ?? null;
+      } else {
+        lastApiError = `detail.get: code=${resp?.resp_code} msg=${resp?.resp_msg}`;
+      }
+    } catch (e) {
+      lastApiError = `detail.get exception: ${(e as Error).message}`;
+      console.warn(lastApiError);
     }
 
-    const item = rawResponse?.aliexpress_affiliate_product_detail_get_response?.resp_result?.result?.products?.product?.[0] ||
-                 rawResponse?.aliexpress_affiliate_product_query_response?.resp_result?.result?.products?.product?.[0];
+    // Attempt 2: product.query filtered by product_ids
+    if (!item) {
+      try {
+        const raw2 = await callAliExpress('aliexpress.affiliate.product.query', {
+          product_ids: productId,
+          fields,
+          page_size: '1',
+          page_no: '1',
+        });
+        const resp2 = raw2?.aliexpress_affiliate_product_query_response?.resp_result;
+        if (resp2?.resp_code === 200 || resp2?.resp_code === '200') {
+          item = resp2?.result?.products?.product?.[0] ?? null;
+        } else {
+          lastApiError += ` | query: code=${resp2?.resp_code} msg=${resp2?.resp_msg}`;
+        }
+      } catch (e2) {
+        lastApiError += ` | query exception: ${(e2 as Error).message}`;
+        console.warn(lastApiError);
+      }
+    }
+
+    // Attempt 3: keyword search by product ID as fallback
+    if (!item) {
+      try {
+        const raw3 = await callAliExpress('aliexpress.affiliate.product.query', {
+          keywords: productId,
+          fields,
+          page_size: '5',
+          page_no: '1',
+        });
+        const resp3 = raw3?.aliexpress_affiliate_product_query_response?.resp_result;
+        if (resp3?.resp_code === 200 || resp3?.resp_code === '200') {
+          const products: Record<string, unknown>[] = resp3?.result?.products?.product ?? [];
+          item = products.find((p) => String(p.product_id) === productId) ?? products[0] ?? null;
+        } else {
+          lastApiError += ` | keyword: code=${resp3?.resp_code} msg=${resp3?.resp_msg}`;
+        }
+      } catch (e3) {
+        lastApiError += ` | keyword exception: ${(e3 as Error).message}`;
+        console.warn(lastApiError);
+      }
+    }
 
     if (!item) {
       return NextResponse.json(
-        { success: false, error: 'המוצר לא נמצא ב-AliExpress. אנא ודא שהמזהה תקין ופעיל באפיליאייט.' },
+        {
+          success: false,
+          error: `המוצר לא נמצא ב-AliExpress Affiliate. ייתכן שהמוצר אינו זמין לאפיליאטים, או שהחשבון שלך אינו מאושר לקטגוריה זו.\n\nפרטי שגיאה: ${lastApiError}`,
+        },
         { status: 404 }
       );
     }
 
-    // 4. Parse AliExpress values
+    // 4. Parse values
     const commissionRate = parseFloat(String(item.commission_rate || 0));
     const rating = parseFloat(String(item.evaluate_rate || 0));
     const salesCount = parseInt(String(item.lastest_volume || 0)) || 0;
     const discountPercent = parseInt(String(item.discount || 0).replace('%', '')) || 0;
 
-    // 5. Generate monetize link
-    let affiliateLink = item.product_detail_url || '';
+    // 5. Generate affiliate link
+    let affiliateLink = String(item.product_detail_url || '');
     try {
       if (item.product_detail_url) {
-        affiliateLink = await generateAffiliateLink(item.product_detail_url);
+        affiliateLink = await generateAffiliateLink(String(item.product_detail_url));
       }
     } catch (linkError) {
       console.warn('Manual monetization failed:', (linkError as Error).message);
@@ -106,11 +177,11 @@ export async function POST(req: NextRequest) {
 
     const productData = {
       aliexpressProductId: String(item.product_id),
-      titleOriginal: item.product_title || 'AliExpress Product',
+      titleOriginal: String(item.product_title || 'AliExpress Product'),
       priceOriginal: parseFloat(String(item.original_price || 0)) || 0,
       priceDiscounted: parseFloat(String(item.sale_price || 0)) || 0,
       discountPercent,
-      imageUrl: item.product_main_image_url || '',
+      imageUrl: String(item.product_main_image_url || ''),
       categoryId: '',
       commissionRate,
       rating,
@@ -120,7 +191,7 @@ export async function POST(req: NextRequest) {
       affiliateLink,
     };
 
-    // 6. Upsert the product using compound key (aliexpressProductId + channelId)
+    // 6. Upsert (compound key: aliexpressProductId + channelId)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const prismaAny = prisma as any;
     const product = await prismaAny.product.upsert({
@@ -142,9 +213,8 @@ export async function POST(req: NextRequest) {
       create: productData,
     });
 
-    // 8. Run AI Content Generation
+    // 7. Generate AI content
     const aiResult = await generateContent(product.id);
-
     if (aiResult.status === 'failed') {
       return NextResponse.json({
         success: false,
@@ -153,15 +223,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Load final DB model with Hebrew copywriting
-    const finalProduct = await prisma.product.findUnique({
-      where: { id: product.id },
-    });
-
-    return NextResponse.json({
-      success: true,
-      product: finalProduct,
-    });
+    const finalProduct = await prisma.product.findUnique({ where: { id: product.id } });
+    return NextResponse.json({ success: true, product: finalProduct });
   } catch (error) {
     console.error('Manual product add endpoint error:', error);
     return NextResponse.json(

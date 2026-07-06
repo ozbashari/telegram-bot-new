@@ -130,8 +130,17 @@ export default function Dashboard() {
       const res = await fetch('/api/products/scan', { method: 'POST', headers });
       const data = await res.json();
       if (data.success) {
+        const b = data.breakdown || {};
+        const breakdownParts = [
+          b.filteredByCommission ? `${b.filteredByCommission} עמלה נמוכה` : '',
+          b.filteredByRating     ? `${b.filteredByRating} דירוג נמוך` : '',
+          b.filteredBySales      ? `${b.filteredBySales} מכירות נמוכות` : '',
+          b.filteredByDiscount   ? `${b.filteredByDiscount} ללא הנחה` : '',
+          b.filteredByNoLink     ? `${b.filteredByNoLink} ללא לינק` : '',
+        ].filter(Boolean).join(' • ');
+        const breakdownStr = breakdownParts ? ` | סוננו: ${breakdownParts}` : '';
         setScanMsg({
-          text: `סריקה הושלמה בהצלחה! ${data.new} מוצרים חדשים נוספו לתור (${data.scanned} נסרקו, ${data.duplicates} כפילויות)`,
+          text: `✅ סריקה הושלמה! ${data.new} חדשים • ${data.scanned} נסרקו • ${data.duplicates} כפילויות${breakdownStr}`,
           isError: false
         });
         fetchData();
@@ -421,19 +430,23 @@ export default function Dashboard() {
                       <span style={{ color: ch.pendingCount > 0 ? 'var(--accent-amber)' : 'var(--text-secondary)', fontWeight: 600 }}>
                         {ch.pendingCount}
                       </span>
+              
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>פרסום אחרון:</span>
-                      <span>
-                        {ch.lastPublishedAt 
-                          ? new Date(ch.lastPublishedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
-                          : 'מעולם לא'}
-                      </span>
-                    </div>                  </div>
+                      <span>פורסם לאחרונה:</span>
+                      <span>{ch.lastPublishedAt ? new Date(ch.lastPublishedAt).toLocaleString('he-IL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'טרם פורסם'}</span>
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+)}
         </div>
 
       </div>
