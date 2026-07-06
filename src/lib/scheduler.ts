@@ -168,7 +168,7 @@ export async function runOrchestrator(): Promise<OrchestrationResult> {
             errors.push(errorMsg);
             // Track failure for retry
             const currentRetry: number = nextProduct.retryCount ?? 0;
-            await (prisma as any).product.update({
+            await prismaAny.product.update({
               where: { id: nextProduct.id },
               data: {
                 status: currentRetry + 1 >= 3 ? 'rejected' : 'publish_failed',
