@@ -48,7 +48,7 @@ export async function scanProducts(): Promise<ScanResult> {
     const minSales = parseInt(settingsMap.get('min_sales') || '10');
     const dedupDays = parseInt(settingsMap.get('dedup_days') || '30');
     const currentPage = parseInt(settingsMap.get('scan_page_offset') || '1');
-    const nextPage = currentPage >= 5 ? 1 : currentPage + 1;
+    const nextPage = currentPage >= 40 ? 1 : currentPage + 1;
 
     // Rotate sort order based on page offset so each run fetches different products
     const sortOrder = SORT_ORDERS[(currentPage - 1) % SORT_ORDERS.length];
@@ -62,17 +62,24 @@ export async function scanProducts(): Promise<ScanResult> {
       return { scanned: 0, new: 0, duplicates: 0, errors: ['No active channels found.'], filteredByCommission: 0, filteredByRating: 0, filteredBySales: 0, filteredByDiscount: 0, filteredByNoLink: 0 };
     }
 
-    // Pre-load recently seen products for dedup (avoid N+1)
-    const cutOffDate = new Date();
-    cutOffDate.setDate(cutOffDate.getDate() - dedupDays);
-    const recentProducts = await prisma.product.findMany({
-      where: { createdAt: { gte: cutOffDate } },
-      select: { aliexpressProductId: true, channelId: true },
+    // Pre-load all products to check in-memory and avoid unique constraint crashes
+    const allProducts = await prisma.product.findMany({
+      select: { id: true, aliexpressProductId: true, channelId: true, createdAt: true, affiliateLink: true },
     });
-    const existingSet = new Set(recentProducts.map(p => `${p.aliexpressProductId}_${p.channelId}`));
+    const existingProductsMap = new Map<string, { id: string; createdAt: Date; affiliateLink: string | null }>();
+    for (const p of allProducts) {
+      existingProductsMap.set(`${p.aliexpressProductId}_${p.channelId}`, {
+        id: p.id,
+        createdAt: p.createdAt,
+        affiliateLink: p.affiliateLink,
+      });
+    }
+
+    // Shuffle channels to distribute discovery randomly across channels in each run
+    const shuffledChannels = [...activeChannels].sort(() => Math.random() - 0.5);
 
     outerLoop:
-    for (const channel of activeChannels) {
+    for (const channel of shuffledChannels) {
       let categoryIds: string[] = [];
       try {
         const parsed = JSON.parse(channel.categories || '[]');
@@ -88,7 +95,10 @@ export async function scanProducts(): Promise<ScanResult> {
         continue;
       }
 
-      for (const categoryId of categoryIds) {
+      // Shuffle category IDs to ensure we don't always hit the duplicate wall on the first category
+      const shuffledCategories = [...categoryIds].sort(() => Math.random() - 0.5);
+
+      for (const categoryId of shuffledCategories) {
         if (newProducts >= MAX_NEW_PER_SCAN) break outerLoop;
 
         try {
@@ -130,8 +140,62 @@ export async function scanProducts(): Promise<ScanResult> {
 
             const aliexpressProductId = String(item.product_id);
             const dedupKey = `${aliexpressProductId}_${channel.id}`;
-            if (existingSet.has(dedupKey)) { duplicates++; continue; }
+            
+            const existingProduct = existingProductsMap.get(dedupKey);
+            
+            if (existingProduct) {
+              const ageInDays = (Date.now() - existingProduct.createdAt.getTime()) / (1000 * 60 * 60 * 24);
+              if (ageInDays < dedupDays) {
+                duplicates++;
+                continue;
+              }
+              
+              // Product is older than dedupDays. Update it to refresh details and reset status to 'pending'.
+              let affiliateLink = existingProduct.affiliateLink;
+              if (!affiliateLink) {
+                try {
+                  if (item.product_detail_url) {
+                    affiliateLink = await generateAffiliateLink(item.product_detail_url);
+                  }
+                } catch (linkError) {
+                  filteredByNoLink++;
+                  errors.push(`Affiliate link failed for existing product ${item.product_id}: ${(linkError as Error).message}`);
+                  continue;
+                }
+              }
 
+              if (!affiliateLink) {
+                filteredByNoLink++;
+                errors.push(`Empty affiliate link for existing product ${item.product_id}`);
+                continue;
+              }
+
+              try {
+                await prisma.product.update({
+                  where: { id: existingProduct.id },
+                  data: {
+                    priceOriginal: parseFloat(String(item.original_price || 0)) || 0,
+                    priceDiscounted: parseFloat(String(item.sale_price || 0)) || 0,
+                    discountPercent,
+                    commissionRate,
+                    rating: feedbackPct,
+                    salesCount,
+                    status: 'pending', // Re-queue for review
+                    createdAt: new Date(), // Reset deduplication window
+                    affiliateLink,
+                  },
+                });
+                newProducts++;
+                existingProduct.createdAt = new Date();
+                existingProduct.affiliateLink = affiliateLink;
+              } catch (updateError) {
+                errors.push(`Failed to update existing product ${item.product_id}: ${(updateError as Error).message}`);
+                duplicates++;
+              }
+              continue;
+            }
+
+            // New product (does not exist in DB at all)
             let affiliateLink = '';
             try {
               if (item.product_detail_url) {
@@ -150,7 +214,7 @@ export async function scanProducts(): Promise<ScanResult> {
             }
 
             try {
-              await prisma.product.create({
+              const created = await prisma.product.create({
                 data: {
                   aliexpressProductId,
                   titleOriginal: item.product_title || 'AliExpress Product',
@@ -168,8 +232,13 @@ export async function scanProducts(): Promise<ScanResult> {
                 },
               });
               newProducts++;
-              existingSet.add(dedupKey);
-            } catch {
+              existingProductsMap.set(dedupKey, {
+                id: created.id,
+                createdAt: created.createdAt,
+                affiliateLink: created.affiliateLink,
+              });
+            } catch (createError) {
+              errors.push(`Failed to create product ${item.product_id}: ${(createError as Error).message}`);
               duplicates++;
             }
           }

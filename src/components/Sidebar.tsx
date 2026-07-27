@@ -2,10 +2,23 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      if (res.ok) {
+        router.push('/login');
+        router.refresh();
+      }
+    } catch (err) {
+      console.error('Logout failed:', err);
+    }
+  };
 
   const menuItems = [
     {
@@ -70,10 +83,16 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <div className="status-indicator">
+        <div className="status-indicator" style={{ marginBottom: '1.25rem' }}>
           <span className="pulse-dot" />
           <span className="status-text">המערכת מחוברת</span>
         </div>
+        <button className="logout-btn" onClick={handleLogout}>
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" style={{ width: '1.1rem', height: '1.1rem' }}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
+          </svg>
+          התנתק מהמערכת
+        </button>
       </div>
 
       <style jsx>{`
@@ -194,6 +213,34 @@ export default function Sidebar() {
           font-size: 0.8rem;
           color: var(--text-muted);
           font-weight: 500;
+        }
+
+        .logout-btn {
+          width: 100%;
+          padding: 0.65rem 1rem;
+          font-size: 0.85rem;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          background: rgba(244, 63, 94, 0.08) !important;
+          border: 1px solid rgba(244, 63, 94, 0.15) !important;
+          color: #f87171 !important;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          font-family: var(--font-display);
+          font-weight: 600;
+        }
+
+        .logout-btn:hover {
+          background: rgba(244, 63, 94, 0.18) !important;
+          border-color: rgba(244, 63, 94, 0.3) !important;
+          transform: translateY(-1px);
+        }
+        
+        .logout-btn:active {
+          transform: translateY(0);
         }
 
         @keyframes pulse {
