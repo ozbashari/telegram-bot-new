@@ -29,6 +29,7 @@ export default function SettingsPage() {
     aliexpress_app_secret: '',
     aliexpress_tracking_id: '',
     gemini_api_key: '',
+    gemini_model: 'gemini-3.1-flash-lite',
     ai_system_prompt: '',
     ai_post_template: '',
     min_commission_rate: '5',
@@ -354,8 +355,16 @@ export default function SettingsPage() {
               <input type="password" className="form-input" value={settings.gemini_api_key || ''} onChange={(e) => handleSettingChange('gemini_api_key', e.target.value)} placeholder="הזן מפתח AI של Gemini API" />
             </div>
 
+            <div className="form-group" style={{ marginTop: '1.5rem' }}>
+              <label className="form-label">מודל Gemini (Gemini Model)</label>
+              <input type="text" className="form-input" value={settings.gemini_model || ''} onChange={(e) => handleSettingChange('gemini_model', e.target.value)} placeholder="gemini-3.1-flash-lite" />
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.4rem' }}>
+                ברירת מחדל: <code>gemini-3.1-flash-lite</code>. מודלים אפשריים: <code>gemini-3.1-flash-lite</code>, <code>gemini-3.5-flash-lite</code>, <code>gemini-3.6-flash</code>.
+              </p>
+            </div>
+
             <div style={{ marginTop: '2.5rem', display: 'flex', gap: '1rem' }}>
-              <button className={`btn btn-primary ${saving ? 'btn-disabled' : ''}`} disabled={saving} onClick={() => saveSettings(['aliexpress_app_key', 'aliexpress_app_secret', 'aliexpress_tracking_id', 'gemini_api_key'])}>
+              <button className={`btn btn-primary ${saving ? 'btn-disabled' : ''}`} disabled={saving} onClick={() => saveSettings(['aliexpress_app_key', 'aliexpress_app_secret', 'aliexpress_tracking_id', 'gemini_api_key', 'gemini_model'])}>
                 {saving ? 'שומר הגדרות...' : 'שמור הגדרות חיבור'}
               </button>
             </div>

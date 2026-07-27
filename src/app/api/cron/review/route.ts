@@ -94,7 +94,8 @@ ${(recentErrors as { titleOriginal: string; lastError: string; retryCount: numbe
         (await prisma.setting.findUnique({ where: { key: 'gemini_api_key' } }))?.value;
       if (geminiKey) {
         const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+        const modelName = (await prisma.setting.findUnique({ where: { key: 'gemini_model' } }))?.value || process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+        const model = genAI.getGenerativeModel({ model: modelName });
         const result = await model.generateContent(
           `אתה מנתח ביצועים של בוט אפיליאציה בטלגרם. קיבלת את הנתונים הבאים:\n\n${statsText}\n\nתן סיכום קצר ו-3 המלצות לשיפור. כתוב בעברית, בצורה תמציתית.`
         );

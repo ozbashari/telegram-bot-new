@@ -32,6 +32,7 @@ export async function generateContent(productId: string): Promise<GenerationResu
   const settingsMap = new Map(dbSettings.map((s: { key: string; value: string }) => [s.key, s.value]));
 
   const apiKey = settingsMap.get('gemini_api_key') || process.env.GEMINI_API_KEY;
+  const modelName = settingsMap.get('gemini_model') || process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
   const systemPrompt = settingsMap.get('ai_system_prompt') || DEFAULT_SYSTEM_PROMPT;
   const userPromptTemplate = settingsMap.get('ai_post_template') || DEFAULT_USER_PROMPT_TEMPLATE;
 
@@ -60,7 +61,7 @@ export async function generateContent(productId: string): Promise<GenerationResu
   // 4. Initialize Gemini API Client
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash-lite',
+    model: modelName,
     systemInstruction: systemPrompt,
     generationConfig: {
       responseMimeType: 'application/json',
