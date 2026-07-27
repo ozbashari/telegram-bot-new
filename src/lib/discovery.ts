@@ -48,7 +48,7 @@ export async function scanProducts(): Promise<ScanResult> {
     const minSales = parseInt(settingsMap.get('min_sales') || '10');
     const dedupDays = parseInt(settingsMap.get('dedup_days') || '30');
     const currentPage = parseInt(settingsMap.get('scan_page_offset') || '1');
-    const nextPage = currentPage >= 5 ? 1 : currentPage + 1;
+    const nextPage = currentPage >= 40 ? 1 : currentPage + 1;
 
     // Rotate sort order based on page offset so each run fetches different products
     const sortOrder = SORT_ORDERS[(currentPage - 1) % SORT_ORDERS.length];
@@ -71,8 +71,11 @@ export async function scanProducts(): Promise<ScanResult> {
     });
     const existingSet = new Set(recentProducts.map(p => `${p.aliexpressProductId}_${p.channelId}`));
 
+    // Shuffle channels to distribute discovery randomly across channels in each run
+    const shuffledChannels = [...activeChannels].sort(() => Math.random() - 0.5);
+
     outerLoop:
-    for (const channel of activeChannels) {
+    for (const channel of shuffledChannels) {
       let categoryIds: string[] = [];
       try {
         const parsed = JSON.parse(channel.categories || '[]');
@@ -88,7 +91,10 @@ export async function scanProducts(): Promise<ScanResult> {
         continue;
       }
 
-      for (const categoryId of categoryIds) {
+      // Shuffle category IDs to ensure we don't always hit the duplicate wall on the first category
+      const shuffledCategories = [...categoryIds].sort(() => Math.random() - 0.5);
+
+      for (const categoryId of shuffledCategories) {
         if (newProducts >= MAX_NEW_PER_SCAN) break outerLoop;
 
         try {
